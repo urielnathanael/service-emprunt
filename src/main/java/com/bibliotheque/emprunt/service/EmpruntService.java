@@ -6,6 +6,7 @@ import com.bibliotheque.emprunt.dto.EmpruntDTO;
 import com.bibliotheque.emprunt.dto.EmprunteurDTO;
 import com.bibliotheque.emprunt.dto.LivreDTO;
 import com.bibliotheque.emprunt.entity.Emprunt;
+import com.bibliotheque.emprunt.exception.*;
 import com.bibliotheque.emprunt.repository.EmpruntRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -34,27 +35,30 @@ public class EmpruntService {
     public EmpruntDTO findById(Long id) {
         return empruntRepository.findById(id)
                 .map(this::toDTO)
-                .orElseThrow(() -> new RuntimeException("Emprunt non trouvé avec l'id : " + id));
+                .orElseThrow(() -> new EmpruntNotFoundException(id));
     }
 
     public EmpruntDTO createEmprunt(EmpruntDTO dto) {
+        // Vérification du livre via le service externe
         try {
             LivreDTO livre = livreClient.findById(dto.getLivreId())
-                    .orElseThrow(() -> new RuntimeException("Livre non trouvé avec l'id : " + dto.getLivreId()));
+                    .orElseThrow(() -> new LivreNotFoundException(dto.getLivreId()));
 
             if (!livre.isDisponible()) {
-                throw new RuntimeException("Le livre '" + livre.getTitre() + "' n'est pas disponible");
+                throw new LivreIndisponibleException(livre.getId(), livre.getTitre());
             }
 
             EmprunteurDTO emprunteur = emprunteurClient.findById(dto.getEmprunteurId())
-                    .orElseThrow(() -> new RuntimeException("Emprunteur non trouvé avec l'id : " + dto.getEmprunteurId()));
+                    .orElseThrow(() -> new EmprunteurNotFoundException(dto.getEmprunteurId()));
 
             log.info("Livre '{}' disponible, emprunteur '{}' trouvé.", livre.getTitre(), emprunteur.getNom());
-        } catch (RuntimeException e) {
-            if (e.getMessage().contains("non trouvé") || e.getMessage().contains("pas disponible")) {
-                throw e;
-            }
-            log.warn("Services externes indisponibles, création de l'emprunt sans vérification : {}", e.getMessage());
+
+        } catch (LivreNotFoundException | LivreIndisponibleException | EmprunteurNotFoundException ex) {
+            // Exceptions métier : on remonte directement, sans ignorer
+            throw ex;
+        } catch (Exception ex) {
+            // Services externes inaccessibles : on continue en mode dégradé
+            log.warn("Services externes indisponibles, emprunt créé sans vérification : {}", ex.getMessage());
         }
 
         LocalDate today = LocalDate.now();
@@ -70,10 +74,11 @@ public class EmpruntService {
 
         Emprunt saved = empruntRepository.save(emprunt);
 
+        // Mise à jour de la disponibilité du livre (best-effort)
         try {
             livreClient.updateDisponibilite(dto.getLivreId(), false);
-        } catch (Exception e) {
-            log.warn("Impossible de mettre à jour la disponibilité du livre (service-livre absent) : {}", e.getMessage());
+        } catch (Exception ex) {
+            log.warn("Impossible de marquer le livre indisponible (service-livre absent) : {}", ex.getMessage());
         }
 
         return toDTO(saved);
@@ -81,10 +86,10 @@ public class EmpruntService {
 
     public EmpruntDTO retourEmprunt(Long id) {
         Emprunt emprunt = empruntRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Emprunt non trouvé avec l'id : " + id));
+                .orElseThrow(() -> new EmpruntNotFoundException(id));
 
-        if ("RENDU".equals(emprunt.getStatut())) {
-            throw new RuntimeException("Cet emprunt a déjà été rendu");
+        if ("RENDU".equals(emprunt.getStatut()) || "RETARD".equals(emprunt.getStatut())) {
+            throw new EmpruntDejaRenduException(id);
         }
 
         LocalDate today = LocalDate.now();
@@ -95,10 +100,11 @@ public class EmpruntService {
 
         Emprunt updated = empruntRepository.save(emprunt);
 
+        // Remise en disponibilité du livre (best-effort)
         try {
             livreClient.updateDisponibilite(emprunt.getLivreId(), true);
-        } catch (Exception e) {
-            log.warn("Impossible de remettre le livre disponible (service-livre absent) : {}", e.getMessage());
+        } catch (Exception ex) {
+            log.warn("Impossible de remettre le livre disponible (service-livre absent) : {}", ex.getMessage());
         }
 
         return toDTO(updated);
@@ -106,10 +112,12 @@ public class EmpruntService {
 
     public void delete(Long id) {
         if (!empruntRepository.existsById(id)) {
-            throw new RuntimeException("Emprunt non trouvé avec l'id : " + id);
+            throw new EmpruntNotFoundException(id);
         }
         empruntRepository.deleteById(id);
     }
+
+    // ─── Mappers ──────────────────────────────────────────────────────────────
 
     private EmpruntDTO toDTO(Emprunt emprunt) {
         return EmpruntDTO.builder()
@@ -120,17 +128,6 @@ public class EmpruntService {
                 .dateRetourPrevue(emprunt.getDateRetourPrevue())
                 .dateRetourReelle(emprunt.getDateRetourReelle())
                 .statut(emprunt.getStatut())
-                .build();
-    }
-
-    private Emprunt toEntity(EmpruntDTO dto) {
-        return Emprunt.builder()
-                .livreId(dto.getLivreId())
-                .emprunteurId(dto.getEmprunteurId())
-                .dateEmprunt(dto.getDateEmprunt())
-                .dateRetourPrevue(dto.getDateRetourPrevue())
-                .dateRetourReelle(dto.getDateRetourReelle())
-                .statut(dto.getStatut())
                 .build();
     }
 }
