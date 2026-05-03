@@ -1,0 +1,23 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.idea
+*.iml
+.vscode
+
+# Maven build output (sera recompilé dans le container)
+target/
+
+# Fichiers Docker (inutiles dans le contexte de build)
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Variables d'environnement sensibles
+.env
+
+# Documentation
+*.md
+README*

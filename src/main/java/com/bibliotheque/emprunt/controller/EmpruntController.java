@@ -26,6 +26,8 @@ public class EmpruntController {
 
     private final EmpruntService empruntService;
 
+
+
     @Operation(
         summary = "Lister tous les emprunts",
         description = "Retourne la liste complète de tous les emprunts enregistrés dans le système"
