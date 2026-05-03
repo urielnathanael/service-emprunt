@@ -1,0 +1,57 @@
+services:
+  # ─────────────────────────────────────────────
+  # Base de données MySQL
+  # ─────────────────────────────────────────────
+  mysql-emprunt:
+    image: mysql:8.0
+    container_name: mysql-emprunt
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: bibliotheque_emprunt
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql-emprunt-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - bibliotheque-net
+
+  # ─────────────────────────────────────────────
+  # Microservice service-emprunt
+  # ─────────────────────────────────────────────
+  service-emprunt:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: service-emprunt:latest
+    container_name: service-emprunt
+    restart: unless-stopped
+    ports:
+      - "8083:8083"
+    env_file:
+      - .env
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql-emprunt:3306/bibliotheque_emprunt?createDatabaseIfNotExist=true&serverTimezone=UTC&sslMode=true
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: root
+      SERVICE_LIVRE_URL: http://service-livre:8081
+      SERVICE_EMPRUNTEUR_URL: http://service-emprunteur:8082
+    depends_on:
+      mysql-emprunt:
+        condition: service_healthy
+    networks:
+      - bibliotheque-net
+
+volumes:
+  mysql-emprunt-data:
+
+networks:
+  bibliotheque-net:
+    driver: bridge
+    name: bibliotheque-net
